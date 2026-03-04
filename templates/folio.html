@@ -9,26 +9,45 @@
 <body>
     <div class="container">
         <div class="row">
-            <h1>Current contact details for {{ entity.name }} on HNC contract {{ folio_key }}</h1>
-            <p>The below page shows up to ten contacts we have recorded in {{ entity.name }}. Please review this list, and if there are any changes to our contact list, please fill out the form below with the corrections and updates:</p>
-            {% if contacts %}
-            <ul class="list-group">
-                {% for contact in contacts %}
-                <li class="list-group-item">
-                    <strong>{{ contact.name }}</strong><br>
-                    Telephone: {{ contact.telephone }}<br>
-                    Email: {{ contact.email }}
-                </li>
+            <h1 class="mt-4">Current contact details for {{ entity.name }}
+                <span style="font-size: 0.7em;color:#666;">|| HNC contract <span style="text-transform: uppercase;">{{ folio_key }}</span> ||</span>
+            </h1>
+            
+            <p>This table shows the primary contract contacts for <span style="text-transform: uppercase;">{{ folio_key }}</span> for {{ entity.name }}. Please review the contacts, and if there are any changes needed, please fill out the form at the bottom of the page with any corrections.</p>
+            
+            <h2>Key contract contacts</h2>
+            
+            <div class="card-body ps-2 pt-4">
+                <h5 class="card-title mb-3">Current contract contacts</h5>
+
+                {% set blocks = [
+                    ("Entity Operational Contact", folio_contact_fields.entity_operational_contact),
+                    ("Notification Contact",       folio_contact_fields.notification_contact),
+                    ("Signatory Witness",          folio_contact_fields.signatory_witness),
+                    ("Agreement Signatory/Signatories", folio_contact_fields.agreement_signatories),
+                ] %}
+
+                {% for label, contacts in blocks %}
+                <div class="mb-2">
+                    <div class="fw-semibold">{{ label }}</div>
+
+                    {% if contacts and contacts|length %}
+                    <ul class="mb-0">
+                        {% for c in contacts %}
+                        <li>{{ c.name }}{% if c.email %} — {{ c.email }}{% endif %}{% if c.telephone %} — {{ c.telephone }}{% endif %}</li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <div class="text-muted">—</div>
+                    {% endif %}
+                </div>
                 {% endfor %}
-            </ul>
-            <br>
-            <hr>
-            <br>
-            <h2>Let us know if any records need correcting.</h2>
+
+            </div>
+        </div>
+        <div class="row">
+            <h2 class="mt-4">Let us know if any records need correcting.</h2>
             <iframe width="640px" height="480px" src="https://forms.office.com/Pages/ResponsePage.aspx?id=rl3fb2yklEee4mhrNWYhF_SmGjaRghtHsobtDeYPMBxUMTJSMTdUTVlZQjRRQTZIVUVVSFhFVkpVMS4u&embed=true" frameborder="0" marginwidth="0" marginheight="0" style="border: none; max-width:100%; max-height:100vh" allowfullscreen webkitallowfullscreen mozallowfullscreen msallowfullscreen> </iframe>
-            {% else %}
-            <p>No contacts found for this entity.</p>
-            {% endif %}
         </div>    
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
