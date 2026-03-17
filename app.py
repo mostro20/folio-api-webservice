@@ -1,16 +1,18 @@
-# app.py
 import os, time, requests
 from flask import Flask, render_template
-from itsdangerous import URLSafeSerializer
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from dotenv import load_dotenv, find_dotenv
+
 load_dotenv(find_dotenv(), override=False)
 
+LINK_EXPIRY_SECONDS = 28 * 24 * 60 * 60  # 28 days
 
 def create_app():
     app = Flask(__name__, instance_relative_config=True)
     os.makedirs(app.instance_path, exist_ok=True)
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
-    serializer = URLSafeSerializer(app.config['SECRET_KEY'])
+
+    serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
     API_URL       = os.getenv('api_url_var')
     CLIENT_ID     = os.getenv('client_id_var')
@@ -19,25 +21,19 @@ def create_app():
     TOKEN_INFO = {"access_token": None, "expires_at": 0}
     GRAPHQL_URL = os.getenv('graph_api_url')
 
-    # These must be the libraryFieldId values (not the instance field id).
-    # Entity Operational Contact is a built-in field queried via entityContacts,
-    # so its env var is no longer needed for customFieldResponses.
-    FIELD_NOTIFICATION_CONTACT   = os.getenv("FIELD_NOTIFICATION_CONTACT")    # MDBGaWVsZC0xNTgxNQ
-    FIELD_SIGNATORY_WITNESS      = os.getenv("FIELD_SIGNATORY_WITNESS")        # MDBGaWVsZC0xNTgxNw
-    FIELD_AGREEMENT_SIGNATORIES  = os.getenv("FIELD_AGREEMENT_SIGNATORIES")    # MDBGaWVsZC0xNTg0Ng
+    FIELD_NOTIFICATION_CONTACT   = os.getenv("FIELD_NOTIFICATION_CONTACT")
+    FIELD_SIGNATORY_WITNESS      = os.getenv("FIELD_SIGNATORY_WITNESS")
+    FIELD_AGREEMENT_SIGNATORIES  = os.getenv("FIELD_AGREEMENT_SIGNATORIES")
 
     CUSTOM_CONTACT_FIELDS = [
         ("notification_contact",  FIELD_NOTIFICATION_CONTACT),
         ("signatory_witness",     FIELD_SIGNATORY_WITNESS),
         ("agreement_signatories", FIELD_AGREEMENT_SIGNATORIES),
     ]
-    # Drop any that aren't configured
     CUSTOM_CONTACT_FIELDS = [(k, v) for k, v in CUSTOM_CONTACT_FIELDS if v]
 
     def get_token():
-        """Fetch a new token if expired or missing."""
         if not TOKEN_INFO["access_token"] or time.time() >= TOKEN_INFO["expires_at"]:
-            print("Fetching new token...")
             response = requests.post(
                 API_URL,
                 data={
@@ -55,7 +51,6 @@ def create_app():
         return TOKEN_INFO["access_token"]
 
     def gql(headers, query, variables=None):
-        """Execute a GraphQL query, returning (data, error_string)."""
         res = requests.post(
             GRAPHQL_URL,
             json={"query": query, "variables": variables or {}},
@@ -81,34 +76,36 @@ def create_app():
 
     @app.route("/link/<token>")
     def folio_page(token):
-        # ----------------------------
-        # 1) Decode + normalise folio key
-        # ----------------------------
         try:
-            folio_key = serializer.loads(token)
+            folio_key = serializer.loads(token, max_age=LINK_EXPIRY_SECONDS)
+
             if isinstance(folio_key, dict):
-                folio_key = folio_key.get("folio_key") or folio_key.get("folioKey") or folio_key.get("key")
+                folio_key = (
+                    folio_key.get("folio_key")
+                    or folio_key.get("folioKey")
+                    or folio_key.get("key")
+                )
+
             if isinstance(folio_key, bytes):
                 folio_key = folio_key.decode("utf-8")
+
             folio_key = (folio_key or "").strip()
+
             if not isinstance(folio_key, str) or not folio_key:
                 return f"Invalid folio key decoded from token: {repr(folio_key)}", 400
+
+        except SignatureExpired:
+            return "This link has expired. Please request a new one.", 403
+        except BadSignature:
+            return "Invalid link.", 400
         except Exception as e:
             return f"Invalid token: {str(e)}", 400
 
-        # ----------------------------
-        # 2) Auth
-        # ----------------------------
         token_api = get_token()
         if isinstance(token_api, dict) and token_api.get("error"):
             return f"Error fetching token: {token_api['error']}", 500
         headers = {"Authorization": f"Bearer {token_api}"}
 
-        # ----------------------------
-        # 3) Base folio query: key, title, main entity, built-in entityContacts
-        #    Entity Operational Contact is a built-in field on the folio,
-        #    not a customFieldResponse, so it's fetched here directly.
-        # ----------------------------
         query_base = """
         query GetFolioBase($folioKey: String!) {
           folios(key: $folioKey) {
@@ -142,14 +139,11 @@ def create_app():
 
         folio_contact_fields = {
             "entity_operational_contact": folio_node.get("entityContacts", {}).get("nodes", []),
-            "notification_contact":       [],
-            "signatory_witness":          [],
-            "agreement_signatories":      [],
+            "notification_contact": [],
+            "signatory_witness": [],
+            "agreement_signatories": [],
         }
 
-        # ----------------------------
-        # 4) One request per custom contact field (avoids complexity limits)
-        # ----------------------------
         query_single_field = """
         query GetFolioContactField($folioKey: String!, $fieldId: ID!) {
           folios(key: $folioKey) {
@@ -186,9 +180,6 @@ def create_app():
             except (KeyError, IndexError, TypeError):
                 pass
 
-        # ----------------------------
-        # 5) Render
-        # ----------------------------
         return render_template(
             "folio.html",
             folio_key=folio_key,
